@@ -1,0 +1,40 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: CF template for iot-core pipeline
+Parameters:
+
+  Environment:
+    Description: Used in resource names.
+    Type: String
+    Default: sirnicholas
+  RawBucketName:
+    Description: Bucket for the raw data.
+    Type: String
+    Default: iot-core-raw-data-bucket-321
+
+
+Resources:
+  ProcessorBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      UpdateReplacePolicy: Retain
+      Properties: 
+        BucketName: !Sub '${Environment}-${RawBucketName}'
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        VersioningConfiguration:
+          Status: Enabled
+        AccessControl: Private
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        LifecycleConfiguration:
+          Rules:
+          - Id: expireAfter5Days
+            Status: Enabled
+            ExpirationInDays: 4
+            NoncurrentVersionExpirationInDays: 1
