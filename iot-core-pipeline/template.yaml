@@ -11,6 +11,10 @@ Parameters:
     Description: Bucket for the raw data.
     Type: String
     Default: iot-core-raw-data-bucket-321
+  IotTopicName:
+    Description: Name for the IoT topic where the messages are intended to be sent
+    Type: String
+    Default: iot-test-topic
 
 
 Resources:
@@ -38,3 +42,33 @@ Resources:
             Status: Enabled
             ExpirationInDays: 4
             NoncurrentVersionExpirationInDays: 1
+
+  # Creating an iot thing
+  IoTThing:
+    Type: AWS::IoT::Thing
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+         ThingName: !Sub '${Environment}-iot-thing-321'
+
+
+  # defining a policy that is meant to be associated with the created certificate
+  # The certificate creation with click ops from console.
+  IoTPolicy:
+    Type: AWS::IoT::Policy
+    Properties:
+         PolicyName: 'IotPolicy'
+         PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: 'Allow'
+                  Action:
+                    - 'iot:Connect'
+                    - 'iot:Publish'
+                  Resource: 
+                    - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:client/${Environment}-iot-thing-321'
+                      # Allow publishing to a specific topic.
+                    - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/${IotTopicName}'
+                      # Allow publishing to any sub-topics under the specific topic.
+                    - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/${IotTopicName}/*'
+  
