@@ -20,7 +20,7 @@ Parameters:
 Resources:
   RawDataBucket:
       Type: AWS::S3::Bucket
-      DeletionPolicy: Retain
+      DeletionPolicy: Delete
       UpdateReplacePolicy: Retain
       Properties: 
         BucketName: !Sub '${Environment}-${RawBucketName}'
@@ -71,4 +71,98 @@ Resources:
                     - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/${IotTopicName}'
                       # Allow publishing to any sub-topics under the specific topic.
                     - !Sub 'arn:aws:iot:${AWS::Region}:${AWS::AccountId}:topic/${IotTopicName}/*'
+
+  # Creating a firehose stream
+  FirehoseDeliveryStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    DependsOn:
+         - FirehoseRole
+    Properties:
+        DeliveryStreamName: !Sub ${Environment}-firehose-delivery-stream-321
+        DeliveryStreamType: DirectPut
+        S3DestinationConfiguration:
+            BucketARN: !GetAtt RawDataBucket.Arn
+            RoleARN: !GetAtt FirehoseRole.Arn
+            BufferingHints:
+                 IntervalInSeconds: 60
+                 SizeInMBs: 1
+            CompressionFormat: GZIP
+            Prefix: !Sub '${Environment}/data/'
+            ErrorOutputPrefix: !Sub '${Environment}/error/'
+            CloudWatchLoggingOptions:
+                Enabled: true
+                LogGroupName: !Sub "/aws/kinesisfirehose/${Environment}-firehose-321"
+                LogStreamName: "S3DeliveryFromIoTCore"
+
+
+  # Creating a role for the firehose stream, it needs the rights to write to the target bucket, I also want it log errors.
+  FirehoseRole:
+    Type: AWS::IAM::Role
+    Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: "firehose.amazonaws.com"
+              Action: "sts:AssumeRole"
+        Policies:
+          - PolicyName: !Sub '${Environment}-firehoserole-321'
+            PolicyDocument: 
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                    - s3:GetBucketLocation
+                    - s3:ListBucket
+                  Resource:
+                    - !Sub arn:aws:s3:::${Environment}-${RawBucketName}/
+                    - !Sub arn:aws:s3:::${Environment}-${RawBucketName}/*
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: '*'
+
+
+  # Creating a role for the IoT, it needs the rights to send values to the firehose stream.
+  IotRoleFirehose:
+    Type: AWS::IAM::Role
+    Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: "iot.amazonaws.com"
+              Action: "sts:AssumeRole"
+        Policies:
+          - PolicyName: !Sub '${Environment}-iot-to-firehose-policy'
+            PolicyDocument: 
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - firehose:PutRecord
+                    - firehose:PutRecordBatch
+                  Resource: !Sub arn:aws:firehose:${AWS::Region}:${AWS::AccountId}:deliverystream/${Environment}-firehose-delivery-stream-321
+
+
+  # The IoT rule that will take every message from the topic and any sub topics         
+  IoTRuleTopic:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: !Sub '${Environment}iotrule321'
+      TopicRulePayload:
+        Actions:
+          - Firehose:
+              DeliveryStreamName: !Ref FirehoseDeliveryStream
+              RoleArn: !GetAtt IotRoleFirehose.Arn
+              Separator: "\n"
+        AwsIotSqlVersion: "2016-03-23"
+        Sql: !Sub SELECT topic() as topic, * FROM '${IotTopicName}/+'
+        RuleDisabled: False
+
+
   
