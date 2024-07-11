@@ -100,3 +100,120 @@ Review all the variables in the sending script, if the script does not give you 
 5. Review the topic that you are tring to send messages and use the wildcard '#' in the test client.
 
 If you cannot connect check that the certificate is active and it is attached to the IAM-policy.
+
+
+# Firehose Delivery Setup to S3
+
+First I defined the the stream itself:
+
+```
+FirehoseDeliveryStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    DependsOn:
+         - FirehoseRole
+    Properties:
+        DeliveryStreamName: !Sub ${Environment}-firehose-delivery-stream-321
+        DeliveryStreamType: DirectPut
+        S3DestinationConfiguration:
+            BucketARN: !GetAtt RawDataBucket.Arn
+            RoleARN: !GetAtt FirehoseRole.Arn
+            BufferingHints:
+                 IntervalInSeconds: 60
+                 SizeInMBs: 1
+            CompressionFormat: GZIP
+            Prefix: !Sub '${Environment}/data/'
+            ErrorOutputPrefix: !Sub '${Environment}/error/'
+            CloudWatchLoggingOptions:
+                Enabled: true
+                LogGroupName: !Sub "/aws/kinesisfirehose/${Environment}-firehose-321"
+                LogStreamName: "S3DeliveryFromIoTCore"
+```
+The stream is configured to buffer the received data for 60 seconds or 1MB, whichever comes first. After the buffering is done the file will be stored to the defined s3 bucket, in this case the raw data bucket. The data amount I'm sending is so low, that this buffer is sufficent.
+
+Then I needed to give the stream some rights, namely to put objects to the s3 bucket and logging related permissions. I created the role as follows:
+
+```
+  FirehoseRole:
+    Type: AWS::IAM::Role
+    Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: "firehose.amazonaws.com"
+              Action: "sts:AssumeRole"
+        Policies:
+          - PolicyName: !Sub '${Environment}-firehoserole-321'
+            PolicyDocument: 
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                    - s3:GetBucketLocation
+                    - s3:ListBucket
+                  Resource:
+                    - !Sub arn:aws:s3:::${Environment}-${RawBucketName}/
+                    - !Sub arn:aws:s3:::${Environment}-${RawBucketName}/*
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: '*'
+```
+As we have attached the created role to the stream it has the permissions we have defined for the role.
+
+But we are not done with the permissions yet, now we need to create a role that the IoT rule will use, it needs the permissions to put records to the delivery stream:
+
+```
+  IotRoleFirehose:
+    Type: AWS::IAM::Role
+    Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: "iot.amazonaws.com"
+              Action: "sts:AssumeRole"
+        Policies:
+          - PolicyName: !Sub '${Environment}-iot-to-firehose-policy'
+            PolicyDocument: 
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - firehose:PutRecord
+                    - firehose:PutRecordBatch
+                  Resource: !Sub arn:aws:firehose:${AWS::Region}:${AWS::AccountId}:deliverystream/${Environment}-firehose-delivery-stream-321
+```
+
+Finally we can define a topic rule for the received messages:
+
+```
+  IoTRuleTopic:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: !Sub '${Environment}iotrule321'
+      TopicRulePayload:
+        Actions:
+          - Firehose:
+              DeliveryStreamName: !Ref FirehoseDeliveryStream
+              RoleArn: !GetAtt IotRoleFirehose.Arn
+              Separator: "\n"
+        AwsIotSqlVersion: "2016-03-23"
+        Sql: !Sub SELECT topic() as topic, * FROM '${IotTopicName}/+'
+        RuleDisabled: False
+```
+In this rule we define the sql on how we wish to take the data and the destination for the data. I'm including the topic in the data, this could be beneficial if for example we have a customer that sends data to the topic but we use sub topics for example to differintiate between equipment and we would like to parse the data while keeping the equipment data.
+
+The buffered files in the s3 will now look like the following:
+```
+{"topic":"iot-test-topic/asdasd","message":"Hello, world!"}
+{"topic":"iot-test-topic/asdasd","message":"Hello, world!"}
+{"topic":"iot-test-topic/asdasd","message":"Hello, world!"}
+{"topic":"iot-test-topic/asdasd","message":"Hello, world!"}
+{"topic":"iot-test-topic/asdasd","message":"Hello, world!"}
+{"topic":"iot-test-topic/asdasd","message":"Hello, world!"}
+```
