@@ -15,6 +15,10 @@ Parameters:
     Description: Name for the IoT topic where the messages are intended to be sent
     Type: String
     Default: iot-test-topic
+  TargetBucketName:
+    Description: Name for the parsed files will be saved.
+    Type: String
+    Default: target-bucket-iot-parser-321
 
 
 Resources:
@@ -43,6 +47,31 @@ Resources:
             ExpirationInDays: 4
             NoncurrentVersionExpirationInDays: 1
 
+  TargetBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Delete
+      UpdateReplacePolicy: Retain
+      Properties: 
+        BucketName: !Sub '${Environment}-${TargetBucketName}'
+        BucketEncryption:
+          ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: AES256
+        VersioningConfiguration:
+          Status: Enabled
+        AccessControl: Private
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+        LifecycleConfiguration:
+          Rules:
+          - Id: expireAfter5Days
+            Status: Enabled
+            ExpirationInDays: 4
+            NoncurrentVersionExpirationInDays: 1
+  
   # Creating an iot thing
   IoTThing:
     Type: AWS::IoT::Thing
@@ -77,27 +106,47 @@ Resources:
     Type: AWS::KinesisFirehose::DeliveryStream
     DependsOn:
          - FirehoseRole
+         - ParserLambda
     Properties:
         DeliveryStreamName: !Sub ${Environment}-firehose-delivery-stream-321
         DeliveryStreamType: DirectPut
-        S3DestinationConfiguration:
+        ExtendedS3DestinationConfiguration:
             BucketARN: !GetAtt RawDataBucket.Arn
             RoleARN: !GetAtt FirehoseRole.Arn
             BufferingHints:
                  IntervalInSeconds: 60
                  SizeInMBs: 1
             CompressionFormat: GZIP
+            FileExtension: .csv.gz
             Prefix: !Sub '${Environment}/data/'
             ErrorOutputPrefix: !Sub '${Environment}/error/'
             CloudWatchLoggingOptions:
                 Enabled: true
                 LogGroupName: !Sub "/aws/kinesisfirehose/${Environment}-firehose-321"
                 LogStreamName: "S3DeliveryFromIoTCore"
-
+            ProcessingConfiguration:
+                Enabled: True
+                Processors:
+                  - Type: Lambda
+                    Parameters:
+                      - ParameterName: LambdaArn
+                        ParameterValue: !GetAtt ParserLambda.Arn
+            S3BackupMode: "Enabled"
+            S3BackupConfiguration:
+                  BucketARN: !GetAtt RawDataBucket.Arn
+                  RoleARN: !GetAtt FirehoseRole.Arn
+                  Prefix: !Sub '${Environment}/data/'
+                  CompressionFormat: GZIP
+                  BufferingHints:
+                       IntervalInSeconds: 60
+                       SizeInMBs: 1
+        
 
   # Creating a role for the firehose stream, it needs the rights to write to the target bucket, I also want it log errors.
   FirehoseRole:
     Type: AWS::IAM::Role
+    DependsOn:
+          - ParserLambda
     Properties:
         AssumeRolePolicyDocument:
           Version: "2012-10-17"
@@ -124,6 +173,10 @@ Resources:
                     - logs:CreateLogStream
                     - logs:PutLogEvents
                   Resource: '*'
+                - Effect: Allow
+                  Action: 
+                    - lambda:InvokeFunction
+                  Resource: !GetAtt ParserLambda.Arn
 
 
   # Creating a role for the IoT, it needs the rights to send values to the firehose stream.
@@ -164,5 +217,56 @@ Resources:
         Sql: !Sub SELECT topic() as topic, * FROM '${IotTopicName}/+'
         RuleDisabled: False
 
-
+  # Defining the lambda function that will be triggered by the firehose
+  ParserLambda:
+    Type: AWS::Serverless::Function
+    DependsOn:
+          - ParserLambdaRole
+    Properties:
+      CodeUri: ./lambda
+      Handler: lambda_function.lambda_handler
+      MemorySize: 128
+      Role: !GetAtt ParserLambdaRole.Arn
+      Runtime: python3.12
+      Timeout: 60
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          TARGET_BUCKET: !Sub ${Environment}-${TargetBucketName}
   
+  # Creating a role for the lambda with the necessary permissions
+  ParserLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: 'lambda.amazonaws.com'
+              Action:
+                - 'sts:AssumeRole'
+        Policies:
+          - PolicyName: !Sub '${Environment}-parser-lambda-role'
+            PolicyDocument: 
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: '*'
+                - Effect: Allow
+                  Action: 
+                    - s3:PutObject
+                  Resource: 
+                    - !Sub arn:aws:s3:::sirnicholas-${Environment}-${TargetBucketName}/
+                    - !Sub arn:aws:s3:::sirnicholas-${Environment}-${TargetBucketName}/*
+                - Effect: Allow
+                  Action:
+                    - firehose:GetRecord
+                    - firehose:DescribeDeliveryStream
+                    - firehose:ListDeliveryStreams
+                    - firehose:ListTagsForDeliveryStream
+                  Resource:
+                    - !Sub arn:aws:firehose:${AWS::Region}:${AWS::AccountId}:deliverystream/${Environment}-firehose-delivery-stream-321
