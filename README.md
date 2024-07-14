@@ -2,7 +2,7 @@
 
 # Summary
 
-The goal is to make explore AWS iot-core and Kinesis Firehose services. 
+The goal is to explore AWS iot-core and Kinesis Firehose services. 
 
 The preliminary pipeline plan is the following:
 1. Receiver would be AWS iotcore, client authentication with certificate, data received via MQTT
@@ -217,3 +217,52 @@ The buffered files in the s3 will now look like the following:
 {"topic":"iot-test-topic/asdasd","message":"Hello, world!"}
 {"topic":"iot-test-topic/asdasd","message":"Hello, world!"}
 ```
+
+# Triggering Lambda from the delivery stream
+
+The first thing I did is that I modifed the Firehose resource to the following:
+
+```
+FirehoseDeliveryStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    DependsOn:
+         - FirehoseRole
+         - ParserLambda
+    Properties:
+        DeliveryStreamName: !Sub ${Environment}-firehose-delivery-stream-321
+        DeliveryStreamType: DirectPut
+        ExtendedS3DestinationConfiguration:
+            BucketARN: !GetAtt RawDataBucket.Arn
+            RoleARN: !GetAtt FirehoseRole.Arn
+            BufferingHints:
+                 IntervalInSeconds: 60
+                 SizeInMBs: 1
+            CompressionFormat: GZIP
+            FileExtension: .csv.gz
+            Prefix: !Sub '${Environment}/data/'
+            ErrorOutputPrefix: !Sub '${Environment}/error/'
+            CloudWatchLoggingOptions:
+                Enabled: true
+                LogGroupName: !Sub "/aws/kinesisfirehose/${Environment}-firehose-321"
+                LogStreamName: "S3DeliveryFromIoTCore"
+            ProcessingConfiguration:
+                Enabled: True
+                Processors:
+                  - Type: Lambda
+                    Parameters:
+                      - ParameterName: LambdaArn
+                        ParameterValue: !GetAtt ParserLambda.Arn
+            S3BackupMode: "Enabled"
+            S3BackupConfiguration:
+                  BucketARN: !GetAtt RawDataBucket.Arn
+                  RoleARN: !GetAtt FirehoseRole.Arn
+                  Prefix: !Sub '${Environment}/data/'
+                  CompressionFormat: GZIP
+                  BufferingHints:
+                       IntervalInSeconds: 60
+                       SizeInMBs: 1
+```
+
+The major changes done to this resources is that instead of ```S3DestinationConfiguration``` we use ```ExtendedS3DestinationConfiguration``` which gives us more options. We added a processing configuration pointing to the intended Lambda, this means that the Lambda function we define will be triggered by the batches created by the stream. Lastly I added a back up config and set it to "Enabled" this means that the stream will save the raw batches to the configured S3 bucket on top of triggering the Lambda. Also I needed to add the permissions for the stream role to invoke the Lambda.
+
+Lastly I created the Lambda and gave it the needed permissions to fetch data from the stream. For the Lambda we do not define any triggers, it is completely handled by us placing it as the processor to the delivery stream.
