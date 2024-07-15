@@ -225,7 +225,7 @@ Resources:
     Properties:
       CodeUri: ./lambda
       Handler: lambda_function.lambda_handler
-      MemorySize: 128
+      MemorySize: 256
       Role: !GetAtt ParserLambdaRole.Arn
       Runtime: python3.12
       Timeout: 60
@@ -233,6 +233,8 @@ Resources:
         Variables:
           ENVIRONMENT: !Ref Environment
           TARGET_BUCKET: !Sub ${Environment}-${TargetBucketName}
+      Layers:
+           - !Ref PandasLayer
   
   # Creating a role for the lambda with the necessary permissions
   ParserLambdaRole:
@@ -260,8 +262,8 @@ Resources:
                   Action: 
                     - s3:PutObject
                   Resource: 
-                    - !Sub arn:aws:s3:::sirnicholas-${Environment}-${TargetBucketName}/
-                    - !Sub arn:aws:s3:::sirnicholas-${Environment}-${TargetBucketName}/*
+                    - !Sub arn:aws:s3:::${Environment}-${TargetBucketName}/
+                    - !Sub arn:aws:s3:::${Environment}-${TargetBucketName}/*
                 - Effect: Allow
                   Action:
                     - firehose:GetRecord
@@ -270,3 +272,13 @@ Resources:
                     - firehose:ListTagsForDeliveryStream
                   Resource:
                     - !Sub arn:aws:firehose:${AWS::Region}:${AWS::AccountId}:deliverystream/${Environment}-firehose-delivery-stream-321
+  
+  PandasLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub ${Environment}-iot-core-pandas-layer
+      Description: A layer with Pandas
+      ContentUri:  ./layers/pandas.zip
+      CompatibleRuntimes:
+           - python3.12
+      RetentionPolicy: Delete
