@@ -111,7 +111,7 @@ Resources:
         DeliveryStreamName: !Sub ${Environment}-firehose-delivery-stream-321
         DeliveryStreamType: DirectPut
         ExtendedS3DestinationConfiguration:
-            BucketARN: !GetAtt RawDataBucket.Arn
+            BucketARN: !GetAtt TargetBucket.Arn
             RoleARN: !GetAtt FirehoseRole.Arn
             BufferingHints:
                  IntervalInSeconds: 60
@@ -142,7 +142,7 @@ Resources:
                        SizeInMBs: 1
         
 
-  # Creating a role for the firehose stream, it needs the rights to write to the target bucket, I also want it log errors.
+  # Creating a role for the firehose stream, it needs the rights to write to the target & raw bucket, I also want it log errors.
   FirehoseRole:
     Type: AWS::IAM::Role
     DependsOn:
@@ -167,6 +167,14 @@ Resources:
                   Resource:
                     - !Sub arn:aws:s3:::${Environment}-${RawBucketName}/
                     - !Sub arn:aws:s3:::${Environment}-${RawBucketName}/*
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                    - s3:GetBucketLocation
+                    - s3:ListBucket
+                  Resource:
+                    - !Sub arn:aws:s3:::${Environment}-${TargetBucketName}/
+                    - !Sub arn:aws:s3:::${Environment}-${TargetBucketName}/*
                 - Effect: Allow
                   Action:
                     - logs:CreateLogGroup
