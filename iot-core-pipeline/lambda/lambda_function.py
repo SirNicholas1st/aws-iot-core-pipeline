@@ -13,7 +13,7 @@ logger.setLevel(logging.INFO)
 
 TARGET_BUCKET = os.getenv("TARGET_BUCKET")
 
-def decode_stream_batch(event: str) -> None:
+def decode_stream_batch(event: str) -> dict:
 
     decoded_records = []
     # keeping the originals for the return response
