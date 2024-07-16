@@ -77,7 +77,7 @@ def prepare_response(original_records: dict) -> str:
         "records": [
             {
             "recordId": record["recordId"],
-            "result": "Ok",
+            "result": "Dropped",
             "data": record["data"]
             } for record in original_records
         ]
