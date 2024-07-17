@@ -232,7 +232,7 @@ FirehoseDeliveryStream:
         DeliveryStreamName: !Sub ${Environment}-firehose-delivery-stream-321
         DeliveryStreamType: DirectPut
         ExtendedS3DestinationConfiguration:
-            BucketARN: !GetAtt RawDataBucket.Arn
+            BucketARN: !GetAtt TargetBucket.Arn
             RoleARN: !GetAtt FirehoseRole.Arn
             BufferingHints:
                  IntervalInSeconds: 60
@@ -266,3 +266,109 @@ FirehoseDeliveryStream:
 The major changes done to this resources is that instead of ```S3DestinationConfiguration``` we use ```ExtendedS3DestinationConfiguration``` which gives us more options. We added a processing configuration pointing to the intended Lambda, this means that the Lambda function we define will be triggered by the batches created by the stream. Lastly I added a back up config and set it to "Enabled" this means that the stream will save the raw batches to the configured S3 bucket on top of triggering the Lambda. Also I needed to add the permissions for the stream role to invoke the Lambda.
 
 Lastly I created the Lambda and gave it the needed permissions to fetch data from the stream. For the Lambda we do not define any triggers, it is completely handled by us placing it as the processor to the delivery stream.
+
+# Lambda
+
+The Lambda itself is pretty basic, I have not included the parsing part since it differs for every use case. There is some Delivery Stream "specific" magic tho that I will explain.
+
+The even that the Delivery Stream pushes to the Lambda looks like the following:
+
+```
+{
+    "invocationId": "08ef5d48-b830-41f6-b5c6-087bec91a044",
+    "deliveryStreamArn": "arn:aws:firehose:eu-west-1:<accountid>:deliverystream/sirnicholas-firehose-delivery-stream-321",
+    "region": "eu-west-1",
+    "records": [
+        {
+            "recordId": "49653879352194574551977745507220068608511091278050492418000000",
+            "approximateArrivalTimestamp": 1720859923841,
+            "data": "eyJ0b3BpYyI6ImlvdC10ZXN0LXRvcGljL2FzZGFzZCIsIm1lc3NhZ2UiOiJIZWxsbywgd29ybGQhIn0K"
+        },
+        {
+            "recordId": "49653879352194574551977745507221277534330706044664152066000000",
+            "approximateArrivalTimestamp": 1720859926070,
+            "data": "eyJ0b3BpYyI6ImlvdC10ZXN0LXRvcGljL2FzZGFzZCIsIm1lc3NhZ2UiOiJIZWxsbywgd29ybGQhIn0K"
+        },
+        {
+            "recordId": "49653879352194574551977745507222486460150320811277811714000000",
+            "approximateArrivalTimestamp": 1720859927903,
+            "data": "eyJ0b3BpYyI6ImlvdC10ZXN0LXRvcGljL2FzZGFzZCIsIm1lc3NhZ2UiOiJIZWxsbywgd29ybGQhIn0K"
+        },
+        {
+            "recordId": "49653879352194574551977745507223695385969935509171994626000000",
+            "approximateArrivalTimestamp": 1720859929724,
+            "data": "eyJ0b3BpYyI6ImlvdC10ZXN0LXRvcGljL2FzZGFzZCIsIm1lc3NhZ2UiOiJIZWxsbywgd29ybGQhIn0K"
+        }
+    ]
+}
+```
+One event will consist of multiple records. The records are the data that we are interested in, namely the "data" part. Also the "recordId" is used in the Lambdas return statement.
+
+The data itself is base64 encoded so we need to first decode it. I Chose the following approach (based on https://docs.aws.amazon.com/lambda/latest/dg/with-kinesis-example.html):
+
+```
+def decode_stream_batch(event: str) -> dict:
+
+    decoded_records = []
+    # keeping the originals for the return response
+    original_records = []
+
+    records = event["records"]
+
+    for record in records:
+        decoded_data = base64.b64decode(record["data"]).decode("utf-8")
+
+        json_data = json.loads(decoded_data)
+
+        decoded_records.append(json_data)
+        original_records.append(record)
+
+    return {
+        "original_records": original_records,
+        "decoded_records": decoded_records
+    }
+```
+
+The function will loop thru records in the record section of the event and store the original records and the decoded data from the data key to their own lists. Finally it returns a dictionary so we can access the original data and the decoded data with keys. 
+
+The original data is kept so we can return it as a response from the Lambda, this way the Delivery Stream knows that the parsing of the records have been successful and it wont store them under errors. If the response is not correct the batch will be stored under errors even in the case where the Lambda runs successfully.
+
+## What to return from the Lambda?
+
+The stream needs to know that the processing has been successful or not and for that it needs a response like the following for every record:
+
+```
+{
+    "recordId": "<recordId from the Lambda input>",
+    "result": "Ok",
+    "data": "<Base64 encoded Transformed data>"
+}
+```
+
+The way I handled this is that I created the following function to prepare the response (docs: https://docs.aws.amazon.com/firehose/latest/dev/data-transformation.html):
+```
+def prepare_response(original_records: dict) -> str:
+
+    response = {
+        "records": [
+            {
+            "recordId": record["recordId"],
+            "result": "Dropped",
+            "data": record["data"]
+            } for record in original_records
+        ]
+    }
+
+    return response
+```
+
+The function takes original records' data, namely the recordId and the base64 encoded original data and creates a response for all the processed records. The reason here for the result: Dropped is that if its "Ok", it will essentially save the raw data to the target bucket. Since the Lambda itself saves the data I do not want the Lambda to send data back to stream for saving purposes.
+
+In the correct way of using the parsing from the stream the data should have the data after the parsing. In this case the Lambda would send the data back to the stream and the stream would save it to the defined s3 bucket (for records with status "Ok").
+
+It should be noted, since this is a testing Lambda it does not have error handling or sufficent logging. For commercial use those atleast should be implemented, but as for barebones starting point the Lambda is sufficent.
+
+
+# Why I do not like this setup & improvement ideas
+
+WIP
