@@ -2,14 +2,20 @@
 
 # Summary
 
-The goal is to explore AWS iot-core and Kinesis Firehose services. 
+This project was done to explore the IoT Core and Firehose Delivery Stream services from AWS.
 
-The preliminary pipeline plan is the following:
-1. Receiver would be AWS iotcore, client authentication with certificate, data received via MQTT
-2. Kinesis Firehose aggregates the messages for example to 1 minute batches. The raw data would also need to be stored in a s3
-3. Lambda handles the aggregated batches and stores the parsed data to a s3 bucket.
+Simplified pipeline architecture:
 
-The directory "iot-core-pipeline" will have all the stack related files and code while the directory "Various" will have some testing scripts etc.
+![arch](Pics/iot-core-overall-architecture.png)
+
+1. IoT Core will receive mqtt-messages
+2. IoT Rule will send the received messages to a Data Stream
+3. Data Stream will buffer the data.
+4. Data Stream will save the raw batch to a S3 bucket and send a batch to Lambda
+5. Lambda will process the data, save it to s3 and finally it sends a response back to the stream.
+- While I was finishing up this pipeline it occured to me that the stream is not most likely meant to be used in a use case were the Lambda does heavy parsing and saves the data to s3 by itself, since the stream itself has the functionality to save the parsed data to a defined bucket. More of this later in the ReadMe.
+
+
 
 # Prerequisites
 
@@ -271,7 +277,7 @@ Lastly I created the Lambda and gave it the needed permissions to fetch data fro
 
 The Lambda itself is pretty basic, I have not included the parsing part since it differs for every use case. There is some Delivery Stream "specific" magic tho that I will explain.
 
-The even that the Delivery Stream pushes to the Lambda looks like the following:
+The event that the Delivery Stream pushes to the Lambda looks like the following:
 
 ```
 {
