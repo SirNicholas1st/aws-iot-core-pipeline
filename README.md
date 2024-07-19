@@ -1,4 +1,4 @@
-# aws-iot-core-pipeline WIP
+# aws-iot-core-pipeline
 
 # Summary
 
@@ -377,4 +377,19 @@ It should be noted, since this is a testing Lambda it does not have error handli
 
 # Why I do not like this setup & improvement ideas
 
-WIP
+## Background
+My idea for creating this kind of pipeline was to avoid a case where the Lambda is triggered straight by the IoT Core messages, since this carries a risk where there would be so many messages that they would trigger the max concurrent Lambda executions which is 1000 on default. If we hit the 1000 concurrent executions all Lambdas would be throttled.
+
+## Current setup
+The main reason for the firehose was to buffer the data and limit the the amount of Lambda invocations. This it does indeed but the problem comes when we want to parse the data. In my usecase I wanted the Lambda to do some "heavy" parsing with Pandas and save the file in the target bucket. 
+
+## Issues with returning response
+The firehose itself has the ability to store the parsed data into a S3 bucket that can be freely defined. But the firehose expects a response for every data point it parsed with the recordId + transformed data. This means that if I were to parse the data with Pandas into a single csv. I would need pass the same parsed data into all the recordIds, this would lead to duplicate data. In this Lambda I avoided this by returning "Dropped" status from the lambda for the recordIds, this means the firehose wont store the values in S3 bucket.
+
+You could also return the original data for the records, this means that firehose would store the "raw data" to the bucket. But since we also defined we want to keep back ups for the raw data it would store them twice. 
+
+## Conclusion
+In essence, it doesn't make sense to use a Lambda with Firehose where the Lambda itself stores the parsed data. The Firehose should be used for light parsing and feeding the response back to the stream, with the output files handled later in the data pipeline.
+
+## Improvement ideas
+But how could we modify this structure so that it would make some sense? I can see an use case where we would use the firehose to buffer data and store those batches in a S3 bucket, but we would not trigger the Lambda straight from the stream, but we would set the basic SNS + SQS combo on the bucket. This way we could for example use Pandas to store big CSV files while also limiting the Lambda invocations. This also would allow us to use DLQ which makes error handling easier. 
