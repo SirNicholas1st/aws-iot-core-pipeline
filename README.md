@@ -29,7 +29,7 @@ Simplified pipeline architecture:
 1. Create an empty directory
 2. Run ```sam init``` in the directory. Follow the steps, this will create alot of boilerplate resources. I added most of these to .gitignore to not clutter this repo so that the meaningfull content can be found more easily.
 3. Run ```sam build```. NOTE: SAM will create a new directory.
-4. Quick and dirty, run ```sam deploy --guided```. This is a guided deployment. In the future I will add a deployment script.
+4. Quick and dirty, run ```sam deploy --guided```. This is a guided deployment.
 
 # IoT thing setup
 
